@@ -38,6 +38,14 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permite acceder a la cámara para grabar las jugadas.",
+          "microphonePermission": "Permite acceder al micrófono para grabar el sonido del video.",
+          "recordAudioAndroid": true
+        }
       ]
     ],
     "experiments": {

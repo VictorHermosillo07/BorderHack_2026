@@ -82,10 +82,19 @@ export const analyzeFoulWithAI = async (
 
     // Construir el contenido con los frames en base64
     const imageParts = frames.map((frame, idx) => {
-      console.log(`  Frame ${idx}: ${frame.base64.substring(0, 50)}...`);
+      console.log(`  Frame/Media ${idx}: ${frame.base64.substring(0, 50)}...`);
+      
+      // Si el fallback de lectura de video completo se activó, el base64 es un mp4 real.
+      // Si fue a través de thumbnails, el MIME type será image/jpeg.
+      // Lo determinamos simplemente verificando el origen o asumiendo el mime basado en si hay un solo "frame"
+      const isVideoFallback = frames.length === 1 && !frame.uri.endsWith('.jpg');
+      const mimeType = isVideoFallback ? 'video/mp4' : 'image/jpeg';
+      
+      console.log(`  MIME Type asigando: ${mimeType}`);
+      
       return {
         inline_data: {
-          mime_type: 'image/jpeg',
+          mime_type: mimeType,
           data: frame.base64,
         },
       };

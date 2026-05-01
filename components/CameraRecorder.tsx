@@ -97,7 +97,7 @@ export const CameraRecorder: React.FC<CameraRecorderProps> = ({ onVideoRecorded,
       try {
         console.log('🔴 Iniciando grabación...');
         const video = await cameraRef.current.recordAsync({
-          maxDuration: 15,
+          maxDuration: 5, // Limitar a 5 segundos (suficiente para una falta en soccer y garantiza el tamaño)
         });
         
         if (video && video.uri) {

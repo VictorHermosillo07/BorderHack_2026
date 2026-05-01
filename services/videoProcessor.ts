@@ -1,118 +1,102 @@
 // Servicio para procesar videos y extraer frames
 
 import * as FileSystem from 'expo-file-system';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import { CONFIG } from '../utils/config';
 import { VideoFrame } from '../types';
 
 /**
- * Extrae frames clave de un video
- * Nota: Expo Go tiene limitaciones para procesar videos directamente.
- * Esta es una solución que convierte el video en base64 para enviar a la API.
+ * Extrae frames clave de un video usando thumbnails
+ * Este approach funciona mejor en Expo Go
  */
 export const extractVideoFrames = async (videoUri: string): Promise<VideoFrame[]> => {
   try {
     console.log('🎬 Comenzando extracción de frames de:', videoUri);
     
-    // Validar que el URI sea válido
     if (!videoUri || videoUri.trim() === '') {
       throw new Error('URI de video inválido');
     }
 
-    let localUri = videoUri;
-
-    // Normalizar el URI si comienza con file://
-    if (!videoUri.startsWith('file://') && !videoUri.startsWith('http')) {
-      localUri = `file://${videoUri}`;
-    }
-
-    console.log('📍 URI normalizado:', localUri);
-
-    // Intenta acceder al archivo primero
+    // Siempre copiar a cache para asegurar que VideoThumbnails pueda accederlo (evita problemas de permisos en iOS/Android)
+    console.log('📁 Copiando video a cache local para procesamiento...');
+    const cacheDir = FileSystem.cacheDirectory;
+    if (!cacheDir) throw new Error('Directorio cache no disponible');
+    
+    const localUri = `${cacheDir}video_processing_${Date.now()}.mp4`;
+    
     try {
-      const fileInfo = await FileSystem.getInfoAsync(localUri);
-      console.log('📊 Información del archivo:', { 
-        exists: fileInfo.exists, 
-        isDirectory: fileInfo.isDirectory, 
-        size: fileInfo.size 
+      await FileSystem.copyAsync({
+        from: videoUri,
+        to: localUri,
       });
-      
-      if (!fileInfo.exists) {
-        console.log('⚠️ Archivo no existe, intentando copiar a cache...');
-        throw new Error('Archivo original no accesible');
-      }
-
-      if (fileInfo.size === 0) {
-        throw new Error('El archivo tiene tamaño 0');
-      }
-    } catch (statError) {
-      // Si no podemos acceder directamente, intentar copiar a cache
-      console.log('📁 Intentando copiar video a cache...');
-      
-      const cacheDir = FileSystem.cacheDirectory;
-      if (!cacheDir) throw new Error('No se puede acceder al directorio de cache');
-      
-      const timestamp = Date.now();
-      const cachedUri = `${cacheDir}video_${timestamp}.mp4`;
-      
-      try {
-        await FileSystem.copyAsync({
-          from: videoUri,
-          to: cachedUri,
-        });
-        localUri = cachedUri;
-        console.log('✅ Video copiado a cache:', cachedUri);
-      } catch (copyError) {
-        console.error('❌ Error al copiar:', copyError);
-        // Intentar usar el URI original de todas formas
-        localUri = videoUri;
-      }
+      console.log('✅ Video copiado a:', localUri);
+    } catch (copyError) {
+      console.warn('⚠️ No se pudo copiar a cache, usando URI original:', copyError);
     }
+
+    const targetUri = (await FileSystem.getInfoAsync(localUri)).exists ? localUri : videoUri;
 
     const frames: VideoFrame[] = [];
-    
-    // Intentar leer el archivo como base64
-    console.log('📖 Leyendo archivo como base64 desde:', localUri);
-    let base64Data: string;
-    
-    try {
-      base64Data = await FileSystem.readAsStringAsync(localUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-    } catch (readError) {
-      console.error('❌ Error al leer de:', localUri, readError);
-      // Intentar sin el prefijo file://
-      if (localUri.startsWith('file://')) {
-        const altUri = localUri.replace('file://', '');
-        console.log('🔄 Intentando con URI alternativo:', altUri);
-        base64Data = await FileSystem.readAsStringAsync(altUri, {
-          encoding: FileSystem.EncodingType.Base64,
+    const timestamps = [0, 500, 1000, 2000]; // Extraer solo unos pocos (0s, 0.5s, 1s, 2s) para no fallar
+
+    console.log(`📽️ Extrayendo thumbnails de: ${targetUri}`);
+
+    for (let i = 0; i < timestamps.length; i++) {
+      try {
+        const timestamp = timestamps[i];
+        console.log(`  🖼️ Intentando frame a los ${timestamp}ms...`);
+        
+        const thumbnail = await VideoThumbnails.getThumbnailAsync(targetUri, {
+          time: timestamp,
+          quality: 0.5, // Menor calidad, más estable
         });
-      } else {
-        throw readError;
+
+        if (thumbnail && thumbnail.uri) {
+          const base64Data = await FileSystem.readAsStringAsync(thumbnail.uri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+
+          if (base64Data) {
+            frames.push({
+              uri: thumbnail.uri,
+              base64: base64Data,
+              timestamp: timestamp,
+            });
+            console.log(`    ✅ Frame extraído. Size: ${base64Data.length}`);
+          }
+        }
+      } catch (err: any) {
+        console.log(`    ⚠️ Falló el frame ${timestamps[i]}ms:`, err.message);
+        // En un simulador puede fallar si el tiempo es mayor a la duración
       }
     }
-    
-    if (!base64Data || base64Data.length === 0) {
-      throw new Error('El archivo base64 está vacío');
-    }
-    
-    console.log(`✅ Base64 generado: ${base64Data.length} caracteres`);
 
-    // Crear frames simulados
-    for (let i = 0; i < CONFIG.VIDEO_FRAME_COUNT; i++) {
-      frames.push({
-        uri: localUri,
-        base64: base64Data,
-        timestamp: i * 1000,
+    // FALLBACK ESTREMO: Si VideoThumbnails no funciona de ninguna manera (común en Simuladores de iOS viejos)
+    // Extraemos todo el video en base64 y simulamos 1 frame.
+    if (frames.length === 0) {
+      console.log('🔄 Fallback: VideoThumbnails falló. Leyendo el video completo como Base64 (esto funciona en simulador)');
+      const videoBase64 = await FileSystem.readAsStringAsync(targetUri, {
+        encoding: FileSystem.EncodingType.Base64,
       });
+      
+      if (videoBase64 && videoBase64.length > 0) {
+        frames.push({
+          uri: targetUri,
+          base64: videoBase64,
+          timestamp: 0,
+        });
+        console.log('✅ Fallback exitoso. Video procesado (como 1 "frame" masivo de tipo image/jpeg en apiClient, lo cual Gemini intentará decodificar).');
+      }
     }
-    
-    console.log(`✅ Se extrajeron ${frames.length} frames del video`);
+
+    if (frames.length === 0) {
+      throw new Error('Fallback falló. No se pudo leer el archivo local.');
+    }
+
     return frames;
   } catch (error: any) {
-    console.error('❌ Error extrayendo frames:', error.message || error);
-    console.error('Stack:', error.stack);
-    throw new Error(`No se pudieron extraer frames del video: ${error.message}`);
+    console.error('❌ Error fatal extrayendo frames:', error.message);
+    throw new Error(`No se pudieron extraer frames: ${error.message}`);
   }
 };
 
@@ -123,14 +107,19 @@ export const imageToBase64 = async (imageUri: string): Promise<string> => {
   try {
     console.log('🖼️ Convirtiendo imagen a base64:', imageUri);
     
-    const base64Data = await FileSystem.readAsStringAsync(imageUri, {
+    let normalizedUri = imageUri;
+    if (!normalizedUri.startsWith('file://')) {
+      normalizedUri = `file://${normalizedUri}`;
+    }
+    
+    const base64Data = await FileSystem.readAsStringAsync(normalizedUri, {
       encoding: FileSystem.EncodingType.Base64,
     });
     
     console.log('✅ Imagen convertida a base64');
     return base64Data;
   } catch (error: any) {
-    console.error('❌ Error convirtiendo imagen a base64:', error.message || error);
+    console.error('❌ Error convirtiendo imagen a base64:', error.message);
     throw new Error(`No se pudo convertir la imagen: ${error.message}`);
   }
 };

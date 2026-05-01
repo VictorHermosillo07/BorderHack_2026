@@ -1,0 +1,56 @@
+this is just notes for Leo about indication or things that can be useful as we progress on the project.
+
+When your app creates real analysis records, use Firebase’s server timestamp.
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+await FirebaseFirestore.instance
+    .collection('users')
+    .doc(uid)
+    .collection('analyses')
+    .add({
+  'sport': 'soccer',
+  'callOnField': 'foul',
+  'decision': 'Inconclusive',
+  'confidence': 0,
+  'ruleApplied': '',
+  'reasoning': '',
+  'limitations': '',
+  'createdAt': FieldValue.serverTimestamp(),
+});
+
+This line is the important part:
+'createdAt': FieldValue.serverTimestamp(),
+
+That tells Firebase:
+Use the real server time when this document is created.
+
+For backend JavaScript later
+createdAt: admin.firestore.FieldValue.serverTimestamp()
+
+or if using modular imports:
+createdAt: FieldValue.serverTimestamp()
+
+So your placeholder is okay
+
+Right now you have:
+users/randomId/createdAt = date only
+
+Later your real data will be:
+users/{uid}/analyses/{analysisId}/createdAt = server timestamp
+
+So you can leave it alone.
+
+
+Important
+
+Your current users/Auto-ID document will not match your future real user ID. That’s okay. It was only a test placeholder.
+
+The real app will create:
+users/{firebaseAuthUserId}/analyses/{analysisId}
+
+Example:
+users/a8sD91kLm2/analyses/play001
+
+
+
